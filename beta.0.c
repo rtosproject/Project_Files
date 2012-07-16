@@ -85,7 +85,9 @@ int main( int argc, char *argv[] ) {
     its.it_value.tv_nsec = 2; // effectively immediate
     // its.it_interval.tv_sec = 1; // every second
     // its.it_interval.tv_nsec = 100000000;
-    int freq = atoi( argv[ 2 ] );
+    // int freq = atoi( argv[ 2 ] );
+    float freq;
+    sscanf( argv[ 2 ], "%f", &freq );
     its.it_interval.tv_sec = floor( freq );
     its.it_interval.tv_nsec =  ( freq - its.it_interval.tv_sec ) * 100000000;
   timer_settime( tid, 0, &its, NULL );
