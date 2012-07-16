@@ -9,7 +9,7 @@
 
 int main( int argc, char *argv[] ) {
 	if( argc != 2 ) {
-		printf( " usage: <prog> <value> (bits)\n" );
+		printf( " usage: <prog> <value(bits)>\n" );
 		return EXIT_FAILURE;
 	}
 
