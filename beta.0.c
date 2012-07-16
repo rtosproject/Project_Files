@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include <time.h>
 #include <signal.h>
@@ -32,7 +33,7 @@ int main( int argc, char *argv[] ) {
   printf( "beta\n" );
 
   if( argc != 4 ) { // to change when adding priority, nice, algorithm, etc.
-    printf( "usage: beta <led#> <freq(nanosecs)> <loadcount>\n" );
+    printf( "usage: beta <led#> <freq(secs)> <loadcount>\n" );
     return EXIT_FAILURE;
   }
 
@@ -42,7 +43,7 @@ int main( int argc, char *argv[] ) {
     sa.sa_handler = handler; // void (*sa_handler)(int);
   sigaction( SIGINT, &sa, NULL );
   
-  
+  //   initialize the semaphor
   // sem_t sem;
   // sem_init( &sem, 0, 0 );
   if( sem_init( &sem, 0, 0 ) ) {
@@ -90,7 +91,8 @@ int main( int argc, char *argv[] ) {
   timer_settime( tid, 0, &its, NULL );
   
   
-  int load, i = 0;
+  volatile int counter;
+  int i = 0, load;
   load = atoi( argv[ 3 ] );
   forever {
     sem_getvalue( &sem, &i );
@@ -104,7 +106,7 @@ int main( int argc, char *argv[] ) {
     while( sem_wait( &sem ) ); // hack
 
     // printf( "tick, state:%i\n", state );
-    for( i = 0; i < load; i++ ); // 'load' loop
+    for( counter = 0; counter < load; counter++ ); // 'load' loop
     if( state )
       fwrite( "0", sizeof( char ), strlen( "0" ), led );
     else
