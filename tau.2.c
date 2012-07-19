@@ -20,6 +20,8 @@
 
 sem_t sem;
 
+int timer_lt( itimer *ta, itimer *tb );
+
 void handler( int signum ) {
   sem_post( &sem );
 }
@@ -91,8 +93,7 @@ int main( int argc, char *argv[] ) {
     while( sem_wait( &sem ) ); // hack
   
     // use timer of cputime and busywait until constant ( arg: cpu utilization )
-    while( ts_load.tv_sec  < ts_util.tv_sec &&
-           ts_load.tv_nsec < ts_util.tv_nsec )
+    while( timer_lt( &ts_load, &ts_util ) )
       clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &ts_load );
     ZERO( ts_load );
     clock_settime( CLOCK_PROCESS_CPUTIME_ID, &ts_load );
@@ -103,5 +104,24 @@ int main( int argc, char *argv[] ) {
   
   return EXIT_SUCCESS; // never reached
 }
+
+
+int timer_lt( itimer *ta, itimer *tb ) {
+  if( ta->tv_sec == tb->tv_sec ) {
+    if( ta->tv_nsec < tb->tv_nsec )
+      return true;
+    else
+      return false;
+  }
+  if( ta->tv_sec < tb->tv_sec )
+    return true;
+  else
+    return false;
+}
+
+
+
+
+
 
 
