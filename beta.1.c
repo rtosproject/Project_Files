@@ -27,11 +27,6 @@ int timer_lt( struct timespec *, struct timespec * );
 void timer_print( struct timespec * );
 
 void handler( int signum ) {
-  /*
-  int i;
-  sem_getvalue( &sem, &i );
-  printf( "handler-sem: %i\n", i ); // not technically safe in asynchronous func...
-  */
   sem_post( &sem );
 }
 
@@ -50,16 +45,8 @@ int main( int argc, char *argv[] ) {
   sigaction( SIGINT, &sa, NULL );
   
   //   initialize the semaphor
-  // sem_t sem;
-  // sem_init( &sem, 0, 0 );
-  if( sem_init( &sem, 0, 0 ) ) {
-    printf( "error initializing sem\n" );
-    return EXIT_FAILURE;
-  }
-  // sem_post( &sem ); // up
-  // sem_wait( &sem ); // down
-  // sem_getvalue( &sem, &int );
-  // sem_destroy( &sem );
+  if( sem_init( &sem, 0, 0 ) )
+    perror( "error initializing semaphore" );
   
   
   // open led file
@@ -68,10 +55,9 @@ int main( int argc, char *argv[] ) {
   sprintf( ss, "/sys/class/leds/beaglebone::usr%s/brightness", argv[ 1 ] );
   FILE *led;
   led = fopen( ss, "w" );
-  if( !led ) {
-    printf( "couldn't open %s", ss );
-    return EXIT_SUCCESS;
-  }
+  if( !led )
+    perror( "couldn't open led file" );
+    // printf( "couldn't open %s", ss );
   
   
   // create timer
@@ -81,38 +67,34 @@ int main( int argc, char *argv[] ) {
     se.sigev_notify = SIGEV_SIGNAL;
     se.sigev_signo = SIGINT;
   timer_t tid;
-  if( timer_create( cid, &se, &tid ) ) {
-    printf( "couldn't create timer\n" );
-    return EXIT_FAILURE;
-  }
+  if( timer_create( cid, &se, &tid ) )
+    perror( "couldn't create timer\n" );
   
   
   // initialize cpu bounds
-  struct timespec ts_util, ts_util_mark; // utilization
+  struct timespec ts_util, ts_util_mark; // cpu utilization
   float cpu_load;
     sscanf( argv[ 3 ], "%f", &cpu_load );
     ts_util.tv_sec = floor( cpu_load );
     ts_util.tv_nsec = ( cpu_load - ts_util.tv_sec ) * 1000000000;
     ts_util_mark = ts_util;
+  struct timespec ts_load;
+    ZERO( ts_load );
   
   
   // arm timer
   struct itimerspec its;
   float freq;
     ZERO( its );
-    its.it_value.tv_nsec = 2; // effectively immediate
     sscanf( argv[ 2 ], "%f", &freq );
     its.it_interval.tv_sec = floor( freq );
     its.it_interval.tv_nsec =  ( freq - its.it_interval.tv_sec ) * 1000000000;
+    its.it_value = its.it_interval; // initial delay
   timer_settime( tid, 0, &its, NULL );
   
   
-  struct timespec ts_load;
-    ZERO( ts_load );
-  int i, c = 0;
+  int i;
   char *sbit;
-  
-  
   forever {
   
     
@@ -129,12 +111,9 @@ int main( int argc, char *argv[] ) {
     while( sem_wait( &sem ) ); // hack
 
 
-    while( timer_lt( &ts_load, &ts_util_mark ) ) {
-      if( clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &ts_load ) )
+    while( timer_lt( &ts_load, &ts_util_mark ) )
+      if( clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &ts_load ) ) // necessary
         perror( "clock_gettime() failed" );
-      // timer_print( &ts_load );
-    }
-    c = 0;
     ZERO( ts_load );
     // if( clock_settime( CLOCK_PROCESS_CPUTIME_ID, &ts_load ) )
     //   perror( "clock_settime() failed" );
@@ -144,7 +123,6 @@ int main( int argc, char *argv[] ) {
       ts_util_mark.tv_nsec -= 1000000000;
       ts_util_mark.tv_sec++;
     }
-    
     
     if( state )
       sbit = "0";
