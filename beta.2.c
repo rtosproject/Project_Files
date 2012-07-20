@@ -112,8 +112,13 @@ int main( int argc, char *argv[] ) {
   timer_settime( tid, 0, &its, NULL );
   
   
+  FILE *timedata = fopen( "timedata", "w" );
+  if( !timedata )
+    perror( "couldn't open file timedata" );
+
   int i;
-  char *sbit;
+  char *sbit, sdata[ 0x200 ];
+  struct timespec tdata;
   forever {
   
     
@@ -126,8 +131,15 @@ int main( int argc, char *argv[] ) {
       }
     }
     
-    
+    clock_gettime( CLOCK_MONOTONIC, &tdata );
+    sprintf( sdata, "{ prio:%i, event:'finish',sec:%i,nsec:%i }\n", param.sched_priority, tdata.tv_sec, tdata.tv_nsec );
+    fwrite( sdata, sizeof( *sdata ), strlen( sdata ), timedata );
+
     while( sem_wait( &sem ) ); // hack
+
+    clock_gettime( CLOCK_MONOTONIC, &tdata );
+    sprintf( sdata, "{ prio:%i, event:'start', sec:%i, nsec:%i }\n", param.sched_priority, tdata.tv_sec, tdata.tv_nsec );
+    fwrite( sdata, sizeof( *sdata ), strlen( sdata ), timedata );
 
 
     while( timer_lt( &ts_load, &ts_util_mark ) )
@@ -154,6 +166,7 @@ int main( int argc, char *argv[] ) {
   
   
   // never reached
+  fclose( timedata );
   fclose( led );
   return 0;
 }
