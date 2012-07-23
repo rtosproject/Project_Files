@@ -34,8 +34,8 @@ void handler( int signum ) {
 int main( int argc, char *argv[] ) {
   printf( "beta\n" );
 
-  if( argc != 6 ) { // to change when adding priority, nice, algorithm, etc.
-    printf( "usage: beta <led#> <freq(secs)> <cpu_util(sec)> <policy> <priority>\n" );
+  if( argc != 7 ) { // to change when adding priority, nice, algorithm, etc.
+    printf( "usage: beta <led#> <freq(secs)> <cpu_util(sec)> <policy> <priority> <uniqueID>\n" );
     
     printf( "FIFO: %i\n", SCHED_FIFO );
       printf( "\tmin prio: %i\n", sched_get_priority_min( SCHED_FIFO ) );
@@ -112,12 +112,14 @@ int main( int argc, char *argv[] ) {
   timer_settime( tid, 0, &its, NULL );
   
   
-  FILE *timedata = fopen( "timedata", "w" );
+  char sdata[ 0x200 ];
+  sprintf( sdata, "timedata_%s", argv[ 6 ] );
+  FILE *timedata = fopen( sdata, "w" );
   if( !timedata )
-    perror( "couldn't open file timedata" );
+    perror( "couldn't open file timedata_UID" );
 
   int i;
-  char *sbit, sdata[ 0x200 ];
+  char *sbit;
   struct timespec tdata;
   forever {
   
