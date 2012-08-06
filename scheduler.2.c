@@ -26,27 +26,39 @@
 
 #include <unistd.h> // getpagesize
 
-#define PAGE getpagesize()
-#define BUF ( PAGE/2 )
+#include "flist.h"
+
+/*
+  $( getconf PAGESIZE ) == 4096
+  this is far more than necessary than what's needed to parse args
+*/
+#define PAGE sysconf( _SC_PAGESIZE )
+// character buffer size for parsing/holding arguments
+#define BUF ( 0x100 )
+// limit on number of processes per group can run at once.
+#define LIM 6
 #define die( s ) { perror( s ); exit( 1 ); }
+
+#define forever for(;1;)
+#define ZERO( x ) memset( &x, 0, sizeof( x ) )
+
 
 sem_t sched_sleep, mem_lock;
 
 struct memmap {
   pid_t pid;
-  char command[ BUF ];
+  int index;
 };
 
 struct proc_data {
-  char command[ BUF ];
   timer_t tid;
   struct itimerspec tau; // http://pubs.opengroup.org/onlinepubs/009696699/basedefs/time.h.html
   struct params_t { 
     char (*a)[ BUF ]; // pointer to arrays
     // char *a[ BUF ]; // array of pointers
-    int num, cap; // of params
+    int num, cap;
   } params;
-  int running;
+  flist ids;
 };
 
 void handler( int signum ) {
@@ -61,14 +73,13 @@ int main() {
     die( "couldn't open scheduler_input" );
   int n; // number of process groups
   char buf[ BUF ];
-  proc_data *procs, *input;
+  proc_data *procs;
 
   fscanf( f, " %i processes ", &n );
   procs = malloc( n * sizeof( struct args ) );
-  // input = procs;
   
   for( c = 0; c < n; c++ ) {
-    // alias for "input->params."
+    // alias
     params_t *p;
     p = &input->params;
       
@@ -80,16 +91,12 @@ int main() {
     // get period
     fgets( buf, BUF, f );
     set_timespec( buf, &procs[ c ].tau.it_interval );
-    procs[ c ].tau.it_value = procs[ c ].tau.it_interval;
     
-    // get command
-    fgets( procs[ c ].command, BUF, f );
-    
-    // parse args
+    // parse command & args
     do {
       if( p->num >= p->cap ) { // extend params if needed
         p->cap *= 2;
-        p->str = realloc( p->str, sizeof( *p->a ) * p->cap * 2 );
+        p->a = realloc( p->a, sizeof( *p->a ) * p->cap );
       }
       fgets( p->a[ p->num ], BUF, f );
       int blank_line;
@@ -98,6 +105,15 @@ int main() {
         p->num++;
     } while( !blank_line && !foef( f ) );
     
+    // append ending null to array for use as param to exec
+    if( p->num >= p->cap ) { // extend params if needed
+      p->cap++;
+      p->a = realloc( p->a, sizeof( *p->a ) * p->cap );
+    }
+    p->a[ p->num ] = NULL;
+    
+    // initialize finite list for pids of this group
+    flist_init( &procs[ c ].ids, LIM );
   }
   fclose( f );
   // ... forgot how much i hate parsing files ...
@@ -105,33 +121,16 @@ int main() {
 
 
   // set priority to realtime, high
-	int policy = SCHED_FIFO; // SCHED_RR
-	struct sched_param sparam;
+  int policy = SCHED_FIFO; // SCHED_RR
+  struct sched_param sparam;
     ZERO( sparam );
     param.sched_priority = 2; // low is high ?
-	sched_setscheduler( 0 /* this process */, SCHED_FIFO, &param );
+  sched_setscheduler( 0 /* this process */, SCHED_FIFO, &param );
 
 
   // initialize 2 named semaphores
   sem_init( &sched_sleep, 0, 0 );
   sem_init( &mem_lock, 0, 1 );
-
-
-  // setup timers ... & arm timers ( later )
-  struct sigevent se;
-    ZERO( se );
-    se.sigev_notify = SIGEV_SIGNAL;
-    se.sigev_signo = SIGALRM;
-  for( c = 0; c < n; c++ )
-    if( timer_create( CLOCK_MONOTONIC, &se, &procs[ c ].tid ) )
-      die( "couldn't create timer\n" );
-
-
-  // register the handler
-  struct sigaction sa;
-    ZERO( sa );
-    sa.sa_handler = handler; // void (*sa_handler)( int );
-  sigaction( SIGALRM, &sa, NULL );
 
 
   // open shared memory
@@ -143,50 +142,86 @@ int main() {
   assert( mem );
 
 
-  // ... arm timers
-  for( c = 0; c < n; c++ )
+  // register the handler
+  struct sigaction sa;
+    ZERO( sa );
+    sa.sa_handler = handler; // void (*sa_handler)( int );
+  sigaction( SIGALRM, &sa, NULL );
+  
+  
+  // setup & arm timers 
+  struct sigevent se;
+    ZERO( se );
+    se.sigev_notify = SIGEV_SIGNAL;
+    se.sigev_signo = SIGALRM;
+  struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1; // immediate ( critical instant )
+  for( c = 0; c < n; c++ ) {
+    if( timer_create( CLOCK_MONOTONIC, &se, &procs[ c ].tid ) )
+      die( "couldn't create timer\n" );
+    procs[ c ].tau.it_value = ts;
     timer_settime( procs[ c ].tid, 0, &procs[ c ].tau, NULL );
+      // for a running deadline
+    clock_gettime( CLOCK_MONOTONIC, &procs[ c ].tau.it_value );
+  }
   
 
   forever {
 
     while( sem_wait( &sched_sleep ) );
 
-    if( mem->pid ) // process finished
-    {
-      // clear pid, read name, realease semaphore
-      pid_t fin;
-      fin = mem->pid;
-      strcpy( buf, mem->command );
-      sem_post( &mem_lock );
+    // read mem, clear pid, realease semaphore
+    pid_t fin;
+    int index;
+    fin = mem->pid;
+    index = mem->index;
+    mem->pid = 0;
+    sem_post( &mem_lock );
+
+    
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    if( fin ) { // process finished
       
       // notify world of process finishing
-      printf( "pid %i finished at ?\n", fin );
-        // need to add actual time here...
-
+      printf( "{ command: '%s', pid: %i, event: '%s', sec: %i, nsec: %i }\n",
+        procs[ index ]., fin, "finish", ts.tv_sec, ts.tv_nsec );
       
-      // find index in names array
       // decrement count array
-        // better way to do this?
-      for( c = 0; strcmp( buf, procs[ c ].command ); c++ );
       procs[ c ].running--;
-
+      
     }
-
-    // else ( check processes to launch )
-    {
-
-      // realease semaphore
-
-      // launch next process & re-insert
+    else { // else ( check processes to launch )
+      
+      // find index // better way to do this?
+      for( c = 0; c < n && timer_lt( &ts, &procs[ c ].tau.it_value ); c++ );
+        // while( now < deadline );
+      assert( c < n );
+      
       // fork, lower prio & exec, then pthread_create & waitpid
-
-      // set priority
-
-      // increment appropriate count & print error if needed
-
-      // output creation
-
+      pid_t cid = fork();
+      if( cid ) { // parent
+      
+        // notify world of process beginning
+        printf( "{ command: '%s', pid: %i, event: '%s', sec: %i, nsec: %i }\n",
+          buf, fin, "begin", ts.tv_sec, ts.tv_nsec );
+        
+        // increment appropriate count & print error if needed
+        if( procs[ c ].running++ > 1 ) {
+          fprintf( stderr, "%s missed a deadline. %i copies now running.\n",
+            procs[ c ].args[ 0 ], procs[ c ].running );
+            
+      }
+      else { // child
+        
+        // set priority
+        
+        // execv[p]
+        //   int execv(const char *path, char *const argv[]);
+        execv( 
+        assert( 0 );
+      }
+    
     }
 
   }
@@ -208,7 +243,7 @@ int timer_lt( struct timespec *ta, struct timespec *tb ) {
     else
       return false;
   }
-  if( ta->tv_sec < tb->tv_sec )
+  else if( ta->tv_sec < tb->tv_sec )
     return true;
   else
     return false;
